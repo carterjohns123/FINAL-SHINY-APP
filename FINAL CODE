@@ -1,0 +1,289 @@
+library(shiny)
+library(shinydashboard)
+library(shinycssloaders)
+library(quantmod)
+library(ggplot2)
+library(plotly)
+library(tidyverse)
+library(tidyquant)
+library(shinyWidgets)
+library(dashboardthemes)
+library(tsibble)
+library(fpp3)
+library(forecast)
+library(fpp3)
+
+# Path where data is
+file_path <- "/Users/carterjohns/Desktop/BAS 475/FINAL/multiTimeline.csv"
+
+# Data starts in 3rd row, skip first 2 rows
+g_trends <- read.csv(file_path, skip = 2)
+# Rename columns
+names(g_trends) <- c("Month", "Flu Shot")
+# Convert Month to date
+g_trends$Month <- yearmonth(g_trends$Month)
+# Convert to tsibble
+g_trends <- tsibble(g_trends)
+
+
+g_trends$`Flu Shot` <- as.numeric(ifelse(g_trends$`Flu Shot` == "<1",
+                                         0,
+                                         g_trends$`Flu Shot`))
+autoplot(g_trends)
+
+
+file_path <- "/Users/carterjohns/Desktop/BAS 475/FINAL/influenza_vaccine_doses_distributed_in_the_united_states__by_season.csv"
+
+# Data starts in 3rd row, skip first 2 rows
+doses_trends <- read.csv(file_path)
+# Rename columns
+names(doses_trends) <- c("Year", "Doses Given (in Millions)")
+# Convert Month to date
+# Convert to tsibble
+doses_trends <- tsibble(doses_trends,index = Year)
+
+autoplot(doses_trends) %>% ggplotly()
+
+DOSES_DF <- as.data.frame(doses_trends)
+
+library(shiny)
+
+ui <- fluidPage(
+  dashboardPage(skin = "blue",
+                
+                dashboardHeader(title = "Flu Shot Searches"),
+                
+                dashboardSidebar(
+                  
+                  
+                  # Making menu tabs
+                  sidebarMenu(id = "tabs",
+                              menuItem("Overall Plot", tabName = "tab1", icon = icon("fas fa-chart-bar")),
+                              menuItem("Users Choice Plot", tabName = "tab2", icon = icon("info-circle")),
+                              menuItem("Plot Interpretations", tabName = "tab3", icon = icon("cog")),
+                              menuItem("Flu Shot Dosages by Year", tabName = "tab4", icon = icon("list-alt")),
+                              
+                              
+                              
+                              selectInput(inputId = "chosenTerm", choices = c("Seasonality", "Seasonality Subseries", "Autocorrelation",
+                                                                              "Additive Decomposition", "Multiplicative Decomposition", 
+                                                                              "Naive Model", "Seasonal Naive", "Mean Model", "Drift",
+                                                                              "Holts", "Holts-Winters", "ARIMA w/ Parameters",
+                                                                              "ARIMA w/ Auto Selected"),
+                                          label = h4("Choose a Graph Type")),
+                              
+                              actionButton("show", "CLICK BEFORE USING APP", 
+                                           style="color: #fff; background-color: #ff0000; border-color: #2e6da4")
+                              
+                              
+                              
+                  )),
+                
+                dashboardBody(
+                  shinyDashboardThemes(theme = "grey_dark"),
+                  
+                  
+                  # Setting content for tabs
+                  tabItems(
+                    tabItem("tab1",
+                            plotlyOutput("plot"),
+                            verbatimTextOutput("interptime"),
+                    ),
+                    
+                    tabItem("tab2",
+                            
+                            plotOutput("choice"),
+                            textOutput("test")),
+                    
+                    tabItem("tab3",
+                            verbatimTextOutput("seasonality"),
+                            verbatimTextOutput("subseries"),
+                            verbatimTextOutput("autoco"),
+                            verbatimTextOutput("adddecom"),
+                            verbatimTextOutput("multidecom")),
+                    tabItem("tab4",
+                            plotlyOutput("doses"),
+                            verbatimTextOutput("dosestext")
+                    )
+                    
+                    
+                  )
+                  
+                  
+                )))
+
+tabnames <- c("tab1, tab2", "tab3", "tab4")
+
+server <- function(input, output, session) {
+  
+  
+  observeEvent(input$show, {
+    showModal(modalDialog(
+      title = "How to Use the App",
+      "This app will help you show the seasonality, autocorrelation, and decomposition of the Google searches of the term `Flu Shot` 
+      from 2004 to today. The `Overall Plot` will show you the overall plot from the Google search. The `Users Choice Plot` will 
+      allow you to see the different plots listed above based on your input from the `Choose a Graph Type` drop down.
+      The `Plot Interpretations` tab will give you the interpretations of each of the plot types for the data. The `Flu Shot Dosages by Year`
+      will allow you to see the doses administered by year with simple regression ran on the data. If there are any questions on how to use
+      this app, please reach out to cspenc17@vols.utk.edu.",
+      easyClose = TRUE
+    ))
+  })
+  
+  TRENDS_DF <- as.data.frame(g_trends)
+  
+  p <- ggplot(TRENDS_DF, aes(Month, `Flu Shot`)) +
+    geom_line(color = "blue") + labs(title = "Overall Google Searches of Flu Shots from Janurary 2004 to March 2022")
+  
+  output$plot <- renderPlotly({p})
+  
+  output$interptime <- renderText("The time series graph from above has very strong seasonality. As most people do, you are 
+                                  getting your flu shot around October. You see a majority of the Google Searches in or around 
+                                  October. There is a spikesearches around 2009 This is because of the Swine Flu outbreak. You 
+                                  also see a big spike in searches around 2020 and 2021. These are higher due to the Coronavirus 
+                                  outbreak. Overall, I found this data very interesting.")
+  
+  p2 <- gg_season(g_trends)
+  
+  p3 <- gg_subseries(g_trends)
+  
+  
+  DOSES_DF <- as.data.frame(doses_trends)
+  
+  REGRESSDOSE <- ggplot(DOSES_DF, aes(Year, `Doses Given (in Millions)`)) +
+    geom_point() +
+    stat_smooth(method = lm) + 
+    labs(title = "Overall Trend of Flu Shot Dosages (in Millions)")
+  
+  output$doses <- renderPlotly({REGRESSDOSE})
+  
+  p4 <- g_trends %>%
+    model(ETS( ~ error("A") + trend("A") + season("N"))) %>%
+    forecast(h = 12) %>%
+    autoplot(g_trends)
+  
+  
+  p5 <- g_trends %>%
+    model(ETS( ~ error("A") + trend("A") + season("A"))) %>%
+    forecast(h = 12) %>%
+    autoplot(g_trends)
+  
+  p6 <- g_trends %>%
+    naive(h = 12) %>%
+    autoplot()
+  
+  
+  p7 <- g_trends %>%
+    snaive(h = 12) %>%
+    autoplot()
+  
+  p8 <- g_trends %>%
+    model(MEAN()) %>%
+    forecast(h= 12) %>% 
+    autoplot(g_trends)
+  
+  p9 <- g_trends %>%
+    model(RW(~drift())) %>%
+    forecast(h = 12) %>% 
+    autoplot(g_trends)
+  
+  p10 <- g_trends %>%
+    model(ARIMA( ~ pdq(2,1,0))) %>%
+    forecast(h = 12) %>%
+    autoplot(g_trends)
+  
+  p11 <- g_trends %>%
+    model(ARIMA()) %>%
+    forecast(h = 12) %>%
+    autoplot(g_trends)
+  
+  output$choice <- renderPlot({
+    if (input$chosenTerm == "Additive Decomposition") {
+      g_trends %>%
+        model(
+          classical_decomposition(`Flu Shot`, type = "additive")
+        ) %>%
+        components() %>%
+        autoplot() +
+        labs(title = "Additive Decomposition of Google Searches of Flu Shots")
+    }
+    else if ( input$chosenTerm == "Seasonality Subseries") {
+      (p3)
+    }
+    else if (input$chosenTerm == "Multiplicative Decomposition") {
+      g_trends %>%
+        model(
+          classical_decomposition(`Flu Shot`, type = "multiplicative")
+        ) %>%
+        components() %>%
+        autoplot() +
+        labs(title = "Multiplicative Decomposition of Google Searches of Flu Shots")
+    }
+    else if ( input$chosenTerm == "Autocorrelation") {
+      acf(g_trends)
+    }
+    else if (input$chosenTerm == "Holts") {
+      (p4)
+    }
+    else if (input$chosenTerm == "Holts-Winters") {
+      (p5)
+    }
+    else if (input$chosenTerm == "Naive Model") {
+      (p6)
+    }
+    
+    else if (input$chosenTerm == "Seasonal Naive") {
+      (p7)
+    }
+    
+    else if (input$chosenTerm == "Mean Model") {
+      (p8)
+    }
+    
+    else if (input$chosenTerm == "Drift") {
+      (p9)
+    }
+    
+    else if (input$chosenTerm == "ARIMA w/ Parameters") {
+      (p10)
+    }
+    else if (input$chosenTerm == "ARIMA w/ Auto Selected") {
+      (p11)
+    }
+    else { (input$chosenTerm == "Seasonality")
+      (p2)
+    }
+  })
+  
+  output$seasonality <- renderText("Seasonality: The seasonality graph is dramatically seasonal. This makes sense 
+                                   with the fact that flu shots are typically administered during one time of the year. 
+                                   Users of Google tend to search more about Flu Shots in October. You can see the 2009 
+                                   line plot is higher. This is because of the Swine Flu outbreak.")
+  
+  output$subseries <- renderText("Seasonality Subseries Plot: The subseries plot allows us to take a deeper dive into the seasonality of
+                                 our data. With this plot, we can see that the month of October has the most searches for FLu Shots.
+                                 This plot further proves that the data is extremely seasonal.")
+  
+  output$autoco <- renderText("Autocorrelation Plot: With this autocorrelation plot, you can see the lower and increase of the lag
+                              at different levels. This makes sense because there is an increase in searches early on in the year
+                              and then it tails off. After that,  you see an increase towards the end of the year.")
+  
+  output$adddecom <- renderText("Additive Decomposition: In this additive decomposition plot, you can see the trend, seasonality, and
+                                randomness in the flu shot data. You can clearly see that the data has an overall positive trend.
+                                The data is also extremely seasonal due to the nature of flu shots. The data is also relatively random
+                                as well.")
+  
+  output$multidecom <- renderText("Multiplicative Decomposition: In this multiplicative decomposition plot, you can see the trend, seasonality, and
+                                randomness in the flu shot data. These three terms were muliplied together instead of added together.You can 
+                                clearly see that the data has an overall positive trend. The data is also extremely seasonal due to the nature
+                                of flu shots. The data is also relatively random as well. The major difference between the additive and multiplicative
+                                plots is that the axises are slightly different in scale.")
+  
+  output$dosestext <- renderText("In this graph, you are able to look at the regression for the overall flu shot dosages for the past 10 years
+                                 This helps you see how there is an overall positive trend in flu shots administered. You are also able to 
+                                 see how some years we have more flu shots administered than other years.")
+}
+
+
+
+shinyApp(ui, server)
